@@ -1,110 +1,82 @@
 """ streamlit_demo
 streamlitでIrisデータセットの分析結果を Web アプリ化するモジュール
+
+【Streamlit 入門 1】Streamlit で機械学習のデモアプリ作成 – DogsCox's tech. blog
+https://dogscox-trivial-tech-blog.com/posts/streamlit_demo_iris_decisiontree/
 """
 
-#
-
+from itertools import chain
 import numpy as np
 import pandas as pd 
 import streamlit as st
 import matplotlib.pyplot as plt 
+import japanize_matplotlib
 import seaborn as sns 
 import graphviz
 import plotly.graph_objects as go
 # irisデータセットでテストする
 from sklearn.datasets import load_iris
+
 # 決定木で分類してみる
 from sklearn import tree
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import accuracy_score
 
+# ランダムフォレスト
+from sklearn.ensemble import RandomForestClassifier
+
+# ロゴの表示用
+from PIL import Image
+
+
 sns.set()
+japanize_matplotlib.japanize()  # 日本語フォントの設定
+
+# matplotlib / seaborn の日本語の文字化けを直す、汎用的かつ一番簡単な設定方法 | BOUL
+# https://boul.tech/mplsns-ja/
 
 
-def make_iris_df():
-    """ Irisデータフレーム作成関数
-    Irisデータセットをデータフレームとして返す関数
-    Args:
-    
-    Returns:
-        df(pd.DataFrame): Irisデータセットのデータフレーム
-    """
-    dataset = load_iris()
-    df = pd.DataFrame(dataset.data)
-    # 変数名を列名に代入
-    df.columns = dataset.feature_names
-    # 目的変数を設定
-    df["species"] = dataset.target
+def st_display_table(df: pd.DataFrame):
 
-    return df
-
-
-def st_display_df(df: pd.DataFrame):
-    """ データフレーム表示関数
-    streamlitでデータフレームを表示する関数
-    Args:
-        df(pd.DataFrame): stで表示するデータフレーム
-    
-    Returns:
-    """
-    # 表示する行数を選択
-    row_size = st.number_input(
-        "表示する行数を選択してください(下スクロールで追加行が表示されます)。",
-        min_value=10,
-        max_value=50,
-        value=10,
-        step=10
-    )
     # データフレームを表示
-    st.dataframe(df.head(row_size))
+    st.subheader('データの確認')
+    # st.caption('最初の10件のみ表示しています')
+    st.table(df)
+
+    # Streamlitでdataframeを表示させる | ITブログ
+    # https://kajiblo.com/streamlit-dataframe/
 
 
-def st_display_pairplot(df: pd.DataFrame):
-    """ ペアプロットをstに表示する関数
-    streamlitでsns.pairplotを表示する関数
-    Args:
-        df(pd.DataFrame): pairplotを作成するデータ
-    Returns:
-    """
-    # ペアプロットを作成
-    fig = plt.figure()
-    fig = sns.pairplot(df, hue="species")
-    # stで表示
+def st_display_histogram(df: pd.DataFrame, x_col, hue_col):
+
+    fig, ax = plt.subplots()
+    # plt.title("ヒストグラム", fontsize=20)     # (3) タイトル
+    # plt.xlabel("Age", fontsize=20)          # (4) x軸ラベル
+    # plt.ylabel("Frequency", fontsize=20)      # (5) y軸ラベル
+    plt.grid(True)                            # (6) 目盛線の表
+
+    if hue_col == 'null':
+        unique_cnt = len(df[x_col].value_counts())
+        if unique_cnt > 10:
+            plt.xlabel(x_col, fontsize=12)          # x軸ラベル
+            plt.hist(df[x_col])   # 単なるヒストグラム
+        else:
+            # print(len(df[x_col].value_counts()))
+            sns.countplot(data=df, x=x_col, ax=ax)
+    else:
+        sns.countplot(data=df, x=x_col, hue=hue_col, ax=ax)
+
     st.pyplot(fig)
 
+    # seabornでグラフを複数のグラフを描画する - Qiita
+    # https://qiita.com/tomokitamaki/items/b954e26be739bee5621e
 
-def st_display_plotly(df: pd.DataFrame):
-    """plotlyグラフをstに表示する関数
-    streamlitでplotlyグラフを表示する関数
-    Args:
-        df(pd.DataFrame): plotlyグラフを作成するデータ
-    Returns:
-    """
-    # plotlyグラフを適当に作成
-    fig = go.Figure(data=[
-        go.Scatter(
-            x=df.loc[df["species"]==0, "petal length (cm)"],
-            y=df.loc[df["species"]==0, "petal width (cm)"],
-            name="setosa",
-            mode="markers"),
-        go.Scatter(
-            x=df.loc[df["species"]==1, "petal length (cm)"],
-            y=df.loc[df["species"]==1, "petal width (cm)"],
-            name="versicolor",
-            mode="markers"),
-        go.Scatter(
-            x=df.loc[df["species"]==2, "petal length (cm)"],
-            y=df.loc[df["species"]==2, "petal width (cm)"],
-            name="virginica",
-            mode="markers"),
-    ])
-    # stに表示
-    st.plotly_chart(fig, user_container_width=True)
 
 
 def ml_dtree(
     X: pd.DataFrame,
-    y: pd.Series) -> list:
+    y: pd.Series,
+    depth: int) -> list:
     """ 決定木で学習、予測を行う関数
     Irisデータセット全体で学習し、学習データの予測値を返す関数
     Args:
@@ -115,7 +87,7 @@ def ml_dtree(
         List: [モデル, 学習データを予測した予測値, accuracy]のリスト
     """
     # 学習
-    clf = DecisionTreeClassifier(max_depth=5)
+    clf = DecisionTreeClassifier(max_depth=depth)
     clf.fit(X, y)
 
     # 予測
@@ -127,93 +99,222 @@ def ml_dtree(
     return [clf, pred, score]
 
 
-def st_display_dtree(clf):
+def st_display_dtree(clf, features):
     """決定木可視化関数
     streamlitでDtreeVizによる決定木を可視化する関数
     Args:
         clf(sklearn.DecisionTreeClassifier): 学習済みモデル
     Return:
     """
-    # graphvizで決定木を可視化
-    dot = tree.export_graphviz(clf, out_file=None)
+    # # graphvizで決定木を可視化
+    # dot = tree.export_graphviz(clf, out_file=None)
+    # # stで表示する
+    # st.graphviz_chart(dot)
+
+    dot = tree.export_graphviz(clf, 
+                               out_file=None, # ファイルは介さずにGraphvizにdot言語データを渡すのでNone
+                               filled=True, # Trueにすると、分岐の際にどちらのノードに多く分類されたのか色で示してくれる
+                               rounded=True, # Trueにすると、ノードの角を丸く描画する。
+                            #    feature_names=['あ', 'い', 'う', 'え'], # これを指定しないとチャート上で特徴量の名前が表示されない
+                               feature_names=features, # これを指定しないとチャート上で特徴量の名前が表示されない
+                            #    class_names=['setosa' 'versicolor' 'virginica'], # これを指定しないとチャート上で分類名が表示されない
+                               special_characters=True # 特殊文字を扱えるようにする
+                               )
+
     # stで表示する
     st.graphviz_chart(dot)
 
 
-def st_file_uploader() -> pd.DataFrame:
-    """ ファイルアップロードを受け付ける関数
-    streamlitでファイルアップロードを受け付ける関数
-    Args:
-    Returns:
-        pd.DataFrame: 予測用のデータ
-    """
-    uploaded_file = st.file_uploader(
-        "予測対象となる CSV ファイルをアップロードしてください。",
-        type="csv",
-        accept_multiple_files=False
-    )
-    if uploaded_file:
-        pred_df = pd.read_csv(uploaded_file)
-        return pred_df
-    else:
-        return pd.DataFrame()
+def st_display_rtree(clf, features):
+
+    # 重要度の抽出
+    feature_importances = pd.Series(clf.feature_importances_, index=features).sort_values(ascending=True)
+    feature_importances = feature_importances.to_frame(name='重要度').sort_values(by='重要度', ascending=False)
+
+    # TOP20可視化
+    feature_importances[0:20].sort_values(by='重要度').plot.barh()
+    plt.legend(loc='lower right')
+    # plt.show()
+    st.pyplot(plt)
+
+    # # 重要度の抽出
+    # feature_importances = pd.Series(clf.feature_importances_, index=X.columns).sort_values(ascending=True)
+    # feature_importances = feature_importances.to_frame(name='重要度').sort_values(by='重要度', ascending=False)
+
+    # # TOP20可視化
+    # feature_importances[0:20].sort_values(by='重要度').plot.barh()
+    # plt.legend(loc='lower right')
+    # # plt.show()
+    # st.pyplot(plt)
 
 
-def ml_pred(clf, X: pd.DataFrame) -> np.array:
-    """ 予測用関数
-    与えられたデータに対して予測値を返す関数
-    Args:
-        clf(sklearn.tree.DecisionTreeClassifier): 学習済みモデル
-        X(pd.DataFrame): 予測対象データ
-    Returns:
-        np.array: 予測結果
-    """
-    pred = clf.predict(X)
-    return pred
 
-
-if __name__ == "__main__":
-    df = make_iris_df()
-
-    # stのタイトル表示
-    st.title("Iris データセットで Streamlit をお試し")
-
-    # データフレーム表示
-    st.markdown(r"## Iris データの詳細")
-    st_display_df(df)
-    st.text("")
-    
-    # pairplot表示
-    st.markdown(r"## Iris データの Pair Plot")
-    st_display_pairplot(df)
-    st.text("")
-
-    # plotlyグラフ表示
-    st.markdown(r"## Petal length と Petal width の plotly グラフ")
-    st_display_plotly(df)
-    st.text("")
+def ml_rtree(
+    X: pd.DataFrame,
+    y: pd.Series) -> list:
 
     # 学習
-    st.markdown(r"## 決定木で学習")
-    
-    X = df.drop("species", axis=1)
-    y = df["species"]
-    clf, pred, score = ml_dtree(X, y)
+    clf = RandomForestClassifier(random_state=0)
+    clf.fit(X, y)
 
-    st.text(f"精度（accuracy）は {score} でした。")
-    st.text("")
+    # 予測
+    pred = clf.predict(X)
 
-    # 決定木の可視化
-    st.markdown(r"## 学習した決定木")
-    st_display_dtree(clf)
-    st.text("")
+    # accuracyで精度評価
+    score = accuracy_score(y, pred)
 
-    # 予測対象ファイルの受付
-    st.markdown(r"## 予測用ファイルをアップロードしてください。")
-    pred_df = st_file_uploader()
+    return [clf, pred, score]
 
-    # 予測対象の予測値を算出
-    if len(pred_df):
-        st.text("予測結果を確認してください（以下の pred カラムが予測値です）。")
-        pred_df["pred"] = ml_pred(clf, pred_df)
-        st.dataframe(pred_df)
+
+def main():
+    """ メインモジュール
+    """
+
+    # stのタイトル表示
+    st.title("Simple AutoML Demo\n（Maschine Learning)")
+
+    # ファイルのアップローダー
+    uploaded_file = st.sidebar.file_uploader("訓練用データのアップロード", type='csv') 
+
+    # サイドメニューの設定
+    activities = ["データ確認", "要約統計量", "可視化", "学習", "About"]
+    choice = st.sidebar.selectbox("Select Activity", activities)
+
+    if choice == 'データ確認':
+        # アップロードの有無を確認
+        if uploaded_file is not None:
+
+            # データフレームの読み込み
+            df = pd.read_csv(uploaded_file)
+
+            # ary_cnt = ["10", "50", "100", ]
+            # cnt = st.sidebar.selectbox("Select Max mm", ary_cnt)
+            cnt = st.sidebar.slider('表示する件数', 1, len(df), 10)
+
+            # テーブルの表示
+            st_display_table(df.head(int(cnt)))
+
+        else:
+            st.subheader('訓練用データをアップロードしてください')
+
+
+    if choice == '要約統計量':
+        # アップロードの有無を確認
+        if uploaded_file is not None:
+
+            # データフレームの読み込み
+            df = pd.read_csv(uploaded_file)
+
+            # テーブルの表示
+            st_display_table(df.describe())
+
+
+    if choice == '可視化':
+        # アップロードの有無を確認
+        if uploaded_file is not None:
+
+            # データフレームの読み込み
+            df = pd.read_csv(uploaded_file)
+
+            # ary_graph = ["ヒストグラム", "カウントプロット" ]
+            # graph = st.sidebar.selectbox("グラフの種類", ary_graph)
+
+            hue_col = df.columns[0]     # '退職'
+            x_col = st.sidebar.selectbox("グラフのX軸", df.columns[0:])
+
+            # ヒストグラムの表示
+            st_display_histogram(df, x_col, 'null')
+
+
+    if choice == '学習':
+        # アップロードの有無を確認
+        if uploaded_file is not None:
+
+            # データフレームの読み込み
+            df = pd.read_csv(uploaded_file)
+
+            # 説明変数と目的変数の設定
+            train_X = df.drop("退職", axis=1) 
+            train_Y = df["退職"]
+
+            ary_algorithm = ["決定木", "ランダムフォレスト" ]
+            algorithm = st.sidebar.selectbox("学習の手法", ary_algorithm)
+
+            if algorithm == '決定木':
+                depth = st.sidebar.number_input('決定木の深さ', min_value = 1, max_value = 5)
+ 
+                # 決定木による予測
+                clf, pred, score = ml_dtree(train_X, train_Y, depth)
+
+                st.subheader(f"訓練用データでの予測精度は")
+                st.subheader(f"{score} でした。")
+
+                # 特徴量の設定（決定木の可視化用）
+                features = df.columns[1:]
+
+                # 決定木の可視化
+                st.caption('決定木の可視化')
+                st_display_dtree(clf, features)
+
+            if algorithm == 'ランダムフォレスト':
+                # ランダムフォレストによる予測
+                clf, pred, score = ml_rtree(train_X, train_Y)
+                st.subheader(f"訓練用データでの予測精度は")
+                st.subheader(f"{score} でした。")
+
+                # 特徴量の設定（重要度の可視化用）
+                features = df.columns[1:]
+
+                # 重要度の可視化
+                st.caption('重要度の可視化')
+                st_display_rtree(clf, features)
+
+
+    if choice == 'About':
+
+        image = Image.open('logo_nail.png')
+        st.image(image)
+
+        # img_target = cv2.imread('logo_nail.png',  flags=cv2.IMREAD_COLOR)
+        # st.image(img_target, width=600, channels='BGR',use_column_width=bool)
+
+        #components.html("""""")
+        st.markdown("Built by [Nail Team]")
+        st.text("Version 0.1")
+        st.markdown("For More Information check out   (https://nai-lab.com/)")
+        
+
+if __name__ == "__main__":
+    main()
+
+    # # stのタイトル表示
+    # st.title("Iris データセットで Streamlit をお試し")
+
+    # # ファイルのアップローダー（サイドバー）
+    # uploaded_file = st.sidebar.file_uploader("ファイルアップロード", type='csv') 
+
+    # if uploaded_file is not None:
+
+    #     df = pd.read_csv(uploaded_file)
+
+    #     st_display_df(df)
+    #     st_display_table(df.head(10))
+    #     st_display_berchart(df['年齢'])
+
+    #     option = st.selectbox(
+    #         'How would you like to be contacted?',
+    #         ('Email', 'Home phone', 'Mobile phone'))
+
+    #     st.write('You selected:', option)
+
+
+    #     option2 = st.selectbox(
+    #         'How would you like to be contacted?',
+    #         df.columns)
+
+    #     st.write('You selected:', option2)
+
+    #     if st.button('列を選んて押してね'):
+    #         st_display_berchart(df[option2])
+
+

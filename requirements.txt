@@ -7,3 +7,4 @@ graphviz
 matplotlib
 plotly
 seaborn
+japanize-matplotlib
